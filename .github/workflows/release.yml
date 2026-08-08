@@ -1,0 +1,50 @@
+name: Release
+
+# 打 tag(如 v0.1.0)或手动触发时,在 macOS/Windows/Linux 三平台构建并发布
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # 允许 GITHUB_TOKEN 创建 Release 并上传产物
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+          - platform: ubuntu-latest
+          - platform: windows-latest
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Linux 需要 Tauri 的系统依赖
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: npm install
+
+      # tauri-action:构建并把产物上传到 GitHub Release
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Flare ${{ github.ref_name }}'
+          releaseBody: 'Flare —— 轻量 HTTP 调试工具'
+          releaseDraft: false

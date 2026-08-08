@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#2b2e3d"/>
+      <stop offset="1" stop-color="#14151b"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#ffd54a"/>
+      <stop offset="0.35" stop-color="#ff9a2e"/>
+      <stop offset="0.7" stop-color="#ff4d2e"/>
+      <stop offset="1" stop-color="#d81b60"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#fff3b0"/>
+      <stop offset="1" stop-color="#ffc04d"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+
+  <!-- 火焰外发光 -->
+  <g filter="url(#glow)" opacity="0.55">
+    <path d="M512 215 C 615 380, 720 470, 692 650 C 678 805, 600 875, 512 875 C 424 875, 346 805, 332 650 C 308 490, 420 430, 466 310 C 488 355, 498 290, 512 215 Z" fill="#ff5a2c"/>
+  </g>
+
+  <!-- 主火焰 -->
+  <path d="M512 230 C 608 392, 706 478, 682 652 C 670 798, 596 862, 512 862 C 428 862, 354 798, 342 652 C 320 506, 422 450, 462 335 C 484 378, 498 305, 512 230 Z" fill="url(#flame)"/>
+
+  <!-- 内焰 -->
+  <path d="M512 430 C 566 520, 622 575, 610 685 C 602 778, 560 822, 512 822 C 464 822, 422 778, 414 685 C 404 590, 470 545, 492 470 C 500 500, 506 458, 512 430 Z" fill="url(#inner)" opacity="0.92"/>
+
+  <!-- 火花 -->
+  <circle cx="442" cy="205" r="7" fill="#ffd54a" opacity="0.85"/>
+  <circle cx="598" cy="178" r="6" fill="#ff9a2e" opacity="0.75"/>
+  <circle cx="558" cy="138" r="4.5" fill="#ffe082" opacity="0.7"/>
+  <circle cx="408" cy="250" r="4" fill="#ffb74d" opacity="0.6"/>
+</svg>
