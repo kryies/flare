@@ -6,6 +6,7 @@
 // 对一个通用 HTTP 工具是致命的;Rust 的 reqwest 没有这个限制。
 
 use base64::Engine;
+use tauri::Manager;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -309,12 +310,38 @@ async fn download_response(
     Ok(bytes.len() as u64)
 }
 
+/// 保存收藏列表到 app_data_dir/collections.json(文件存储,不受 identifier 变化影响)
+#[tauri::command]
+fn save_collections(app: tauri::AppHandle, data: String) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("collections.json"), data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 读取收藏列表(文件不存在返回空数组)
+#[tauri::command]
+fn load_collections(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = dir.join("collections.json");
+    if path.exists() {
+        std::fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Ok("[]".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![send_request, download_response])
+        .invoke_handler(tauri::generate_handler![
+            send_request,
+            download_response,
+            save_collections,
+            load_collections
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

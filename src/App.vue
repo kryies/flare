@@ -6,6 +6,7 @@ import RequestPanel from "./components/RequestPanel.vue";
 import ResponsePanel from "./components/ResponsePanel.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import EnvPanel from "./components/EnvPanel.vue";
+import CollectionPanel from "./components/CollectionPanel.vue";
 
 // 创建一个空白请求表单
 function makeForm() {
@@ -88,6 +89,51 @@ function finishEdit(tab) {
 const HISTORY_KEY = "reqman:history";
 const HISTORY_MAX = 50;
 const history = ref(loadHistory());
+
+// ===== 收藏请求(Collection,文件存储)=====
+const collections = ref([]);
+async function loadCollections() {
+  try { collections.value = JSON.parse(await invoke("load_collections")); } catch { collections.value = []; }
+}
+async function persistCollections() {
+  await invoke("save_collections", { data: JSON.stringify(collections.value) });
+}
+function saveCollection() {
+  const tab = activeTab.value;
+  if (!tab) return;
+  const f = tab.form;
+  collections.value.unshift({
+    id: Date.now(),
+    name: f.url.split("/").pop() || f.url,
+    method: f.method,
+    url: f.url,
+    params: f.params.filter((p) => p.key.trim()).map((p) => ({ ...p })),
+    headers: f.headers.filter((h) => h.key.trim()).map((h) => ({ ...h })),
+    bodyType: f.bodyType,
+    rawBody: f.rawBody,
+    formData: (f.formData || []).map((p) => ({ ...p })),
+    urlencoded: (f.urlencoded || []).filter((p) => p.key.trim()).map((p) => ({ ...p })),
+    binaryFile: f.binaryFile || "",
+  });
+  persistCollections();
+}
+function removeCollection(item) {
+  collections.value = collections.value.filter((c) => c.id !== item.id);
+  persistCollections();
+}
+function restoreCollection(item) {
+  const tab = activeTab.value;
+  if (!tab) return;
+  tab.form.method = item.method;
+  tab.form.url = item.url;
+  tab.form.params = item.params?.length ? item.params.map((p) => ({ ...p })) : [{ key: "", value: "" }];
+  tab.form.headers = item.headers?.length ? item.headers.map((h) => ({ ...h })) : [{ key: "", value: "" }];
+  tab.form.bodyType = item.bodyType || "none";
+  tab.form.rawBody = item.rawBody || "";
+  tab.form.formData = item.formData?.map((p) => ({ ...p })) || [];
+  tab.form.urlencoded = item.urlencoded?.length ? item.urlencoded.map((p) => ({ ...p })) : [{ key: "", value: "" }];
+  tab.form.binaryFile = item.binaryFile || "";
+}
 
 function loadHistory() {
   try {
@@ -355,6 +401,7 @@ watch(tabs, saveTabs, { deep: true });
 
 onMounted(() => {
   loadTabs();
+  loadCollections();
   window.addEventListener("keydown", onKeydown);
 });
 onUnmounted(() => window.removeEventListener("keydown", onKeydown));
@@ -433,8 +480,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
     <main class="app-main" :class="{ vertical: layout === 'vertical' }" v-if="activeTab">
       <section class="pane pane-left" :class="{ vertical: layout === 'vertical' }">
         <HistoryPanel :history="history" @restore="restoreFromHistory" @clear="clearHistory" @remove="removeSingleHistory" />
+        <CollectionPanel :items="collections" @restore="restoreCollection" @remove="removeCollection" />
         <EnvPanel :vars="envVars" @add="addVar" @remove="removeVar" />
-        <RequestPanel :form="activeTab.form" :loading="activeTab.loading" @send="send" />
+        <RequestPanel :form="activeTab.form" :loading="activeTab.loading" @send="send" @save-collection="saveCollection" />
       </section>
 
       <section class="pane pane-right" :class="{ vertical: layout === 'vertical' }">

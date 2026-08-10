@@ -8,7 +8,7 @@ const props = defineProps({
   form: { type: Object, required: true },
   loading: { type: Boolean, default: false },
 });
-const emit = defineEmits(["send"]);
+const emit = defineEmits(["send", "save-collection"]);
 
 // 支持的 HTTP 方法
 const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -382,8 +382,11 @@ function importCurl() {
       </template>
     </div>
 
-    <!-- cURL 导入 / 导出 -->
+    <!-- 收藏 + cURL 导入 / 导出 -->
     <div class="curl-actions">
+      <button class="curl-btn" @click="emit('save-collection')" title="收藏当前请求">
+        ⭐ 收藏
+      </button>
       <button class="curl-btn" @click="copyCurl" title="把当前请求复制为 curl 命令">
         {{ copied ? "已复制 ✓" : "复制为 cURL" }}
       </button>
