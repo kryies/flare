@@ -1,6 +1,6 @@
 [package]
 name = "flare"
-version = "1.0.0"
+version = "1.1.0"
 description = "Flare — 轻量跨平台 HTTP 调试工具(类 Postman)"
 authors = ["kryies"]
 edition = "2021"

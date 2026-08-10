@@ -1,7 +1,7 @@
 {
   "name": "reqman",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "🔥 Flare — 轻量跨平台 HTTP 调试工具(类 Postman),Rust + Tauri 构建",
   "keywords": ["http", "api", "postman", "tauri", "rust", "vue", "debugger", "rest"],
   "license": "MIT",
