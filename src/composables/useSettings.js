@@ -1,4 +1,4 @@
-import { reactive, ref, watch } from "vue";
+import { reactive, ref, watch, computed } from "vue";
 
 // 全局网络设置 + 主题/布局
 export function useSettings() {
@@ -27,7 +27,7 @@ export function useSettings() {
 
   // 请求/响应分栏比例
   const splitPercent = ref(Number(localStorage.getItem("flare:split")) || 42);
-  const paneLeftStyle = { flex: `0 0 ${splitPercent.value}%` };
+  const paneLeftStyle = computed(() => ({ flex: `0 0 ${splitPercent.value}%` }));
 
   // URL 没带协议时自动补 http://
   function ensureScheme(s) {
