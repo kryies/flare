@@ -145,6 +145,10 @@ function clearHistory() {
   history.value = [];
   persistHistory();
 }
+function removeSingleHistory(item) {
+  history.value = history.value.filter((h) => h.id !== item.id);
+  persistHistory();
+}
 
 // ===== 全局网络设置(禁用证书校验、代理)=====
 const settings = reactive({
@@ -152,6 +156,10 @@ const settings = reactive({
   proxy: "",
   timeoutMs: 0, // 0 = 不限时
 });
+
+// ===== 布局(水平左右 / 垂直上下),localStorage 持久化 =====
+const layout = ref(localStorage.getItem("flare:layout") || "horizontal");
+watch(layout, (v) => localStorage.setItem("flare:layout", v));
 
 // ===== 环境变量(URL/Headers/Body 里的 {{name}} 发送时替换成值)=====
 const envVars = reactive([{ key: "base_url", value: "https://postman-echo.com" }]);
@@ -179,7 +187,10 @@ async function send() {
 
   try {
     // 应用环境变量({{name}} → 值),发送的是替换后的内容
-    const url = ensureScheme(applyVars(tab.form.url));
+    let url = ensureScheme(applyVars(tab.form.url));
+    // URL 含 ?query 时去掉(用 Params 拼,避免重复)
+    const qi = url.indexOf("?");
+    if (qi >= 0) url = url.slice(0, qi);
     const params = tab.form.params
       .filter((p) => p.key.trim() !== "")
       .map((p) => ({ key: applyVars(p.key), value: applyVars(p.value) }));
@@ -353,8 +364,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   <div class="app">
     <header class="app-header">
       <div class="header-left">
-        <span class="brand">⚡ Flare</span>
-        <span class="subtitle">轻量 HTTP 调试工具</span>
+        <img src="/flare.svg" class="brand-icon" alt="Flare" />
+        <span class="brand">Flare</span>
       </div>
       <div class="header-settings">
         <label
@@ -382,6 +393,14 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           />
           ms
         </label>
+        <button
+          class="layout-btn"
+          @click="layout = layout === 'horizontal' ? 'vertical' : 'horizontal'"
+          :title="layout === 'horizontal' ? '切换为上下布局' : '切换为左右布局'"
+        >
+          <svg v-if="layout === 'horizontal'" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2" width="6" height="12" rx="1"/><rect x="9" y="2" width="6" height="12" rx="1"/></svg>
+          <svg v-else viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="6" rx="1"/><rect x="2" y="9" width="12" height="6" rx="1"/></svg>
+        </button>
       </div>
     </header>
 
@@ -411,14 +430,14 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
       <button class="tab-new" title="新建标签" @click="createTab">+</button>
     </div>
 
-    <main class="app-main" v-if="activeTab">
-      <section class="pane pane-left">
-        <HistoryPanel :history="history" @restore="restoreFromHistory" @clear="clearHistory" />
+    <main class="app-main" :class="{ vertical: layout === 'vertical' }" v-if="activeTab">
+      <section class="pane pane-left" :class="{ vertical: layout === 'vertical' }">
+        <HistoryPanel :history="history" @restore="restoreFromHistory" @clear="clearHistory" @remove="removeSingleHistory" />
         <EnvPanel :vars="envVars" @add="addVar" @remove="removeVar" />
         <RequestPanel :form="activeTab.form" :loading="activeTab.loading" @send="send" />
       </section>
 
-      <section class="pane pane-right">
+      <section class="pane pane-right" :class="{ vertical: layout === 'vertical' }">
         <ResponsePanel
           :response="activeTab.response"
           :error="activeTab.error"
@@ -535,6 +554,11 @@ body,
   border-color: var(--accent);
 }
 
+.brand-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+}
 .brand {
   font-weight: 700;
   font-size: 16px;
@@ -669,5 +693,32 @@ body,
 
 .pane-right {
   flex: 1;
+}
+
+/* 上下(垂直)布局 */
+.app-main.vertical {
+  flex-direction: column;
+}
+.pane-left.vertical {
+  flex: 0 0 42%;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+.pane-right.vertical {
+  flex: 1;
+}
+.layout-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.layout-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 </style>

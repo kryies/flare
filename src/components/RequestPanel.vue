@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 
 // form 是 App.vue 传入的 reactive 对象,这里直接读写它的属性。
@@ -35,7 +35,39 @@ function removeParam(i) {
   if (props.form.params.length === 0) addParam(); // 至少保留一行
 }
 
+// URL 带 ?query 时,自动拆到 Params 表(像 Postman),避免重复
+function syncParamsFromUrl() {
+  const idx = props.form.url.indexOf("?");
+  if (idx === -1) return;
+  const base = props.form.url.slice(0, idx);
+  const qs = props.form.url.slice(idx + 1);
+  const parsed = [];
+  try {
+    new URLSearchParams(qs).forEach((v, k) => parsed.push({ key: k, value: v }));
+  } catch {}
+  if (parsed.length) props.form.params = parsed;
+  // URL 保留 ?query(用户可见),发送时 send() 会去掉避免重复
+}
+
+// Params → URL 反向同步:编辑 Params 时,URL 的 ?query 自动更新(Postman 双向)
+watch(
+  () => props.form.params,
+  () => {
+    const base = (props.form.url || "").split("?")[0];
+    const valid = props.form.params.filter((p) => p.key.trim());
+    if (valid.length) {
+      const qs = valid
+        .map((p) => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`)
+        .join("&");
+      props.form.url = base + "?" + qs;
+    } else {
+      props.form.url = base;
+    }
+  },
+  { deep: true }
+);
 function onSend() {
+  syncParamsFromUrl();
   if (!props.form.url.trim()) return;
   emit("send");
 }
@@ -178,7 +210,8 @@ function parseCurl(cmd) {
     url: "",
     params: [{ key: "", value: "" }],
     headers: [],
-    body: "",
+    bodyType: "none",
+    rawBody: "",
   };
   let hasBody = false;
   for (let i = tokens[0] === "curl" ? 1 : 0; i < tokens.length; i++) {
@@ -190,14 +223,26 @@ function parseCurl(cmd) {
       const idx = h.indexOf(":");
       if (idx > -1) form.headers.push({ key: h.slice(0, idx).trim(), value: h.slice(idx + 1).trim() });
     } else if (["-d", "--data", "--data-raw", "--data-binary", "--data-ascii"].includes(t)) {
-      form.body += (form.body ? "&" : "") + (tokens[++i] || "");
+      form.rawBody += (form.rawBody ? "&" : "") + (tokens[++i] || "");
       hasBody = true;
     } else if (/^https?:\/\//.test(t)) {
       form.url = t;
     }
-    // 其它 - 开头的选项直接忽略
   }
-  if (hasBody && form.method === "GET") form.method = "POST"; // 有 body 默认 POST(curl 行为)
+  if (hasBody) {
+    if (form.method === "GET") form.method = "POST";
+    form.bodyType = "raw";
+  }
+  // URL ?query 拆到 params(params watch 会把 ?query 加回 URL)
+  const qi = form.url.indexOf("?");
+  if (qi >= 0) {
+    const base = form.url.slice(0, qi);
+    const qs = form.url.slice(qi + 1);
+    const parsed = [];
+    try { new URLSearchParams(qs).forEach((v, k) => parsed.push({ key: k, value: v })); } catch {}
+    if (parsed.length) form.params = parsed;
+    form.url = base;
+  }
   if (!form.headers.length) form.headers.push({ key: "", value: "" });
   return form;
 }
@@ -209,10 +254,11 @@ function importCurl() {
     return;
   }
   props.form.method = parsed.method;
-  props.form.url = parsed.url;
-  props.form.params = parsed.params;
   props.form.headers = parsed.headers;
-  props.form.body = parsed.body;
+  props.form.bodyType = parsed.bodyType;
+  props.form.rawBody = parsed.rawBody;
+  props.form.url = parsed.url;
+  props.form.params = parsed.params; // 最后设:触发 watch 把 params 拼回 URL ?query
   showImport.value = false;
   importText.value = "";
 }

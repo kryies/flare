@@ -2,7 +2,7 @@
 defineProps({
   history: { type: Array, default: () => [] },
 });
-const emit = defineEmits(["restore", "clear"]);
+const emit = defineEmits(["restore", "clear", "remove"]);
 
 function fmtTime(ts) {
   const d = new Date(ts);
@@ -36,6 +36,7 @@ function methodClass(m) {
           <span class="hist-method" :class="methodClass(h.method)">{{ h.method }}</span>
           <span class="hist-url">{{ h.url }}</span>
           <span class="hist-time">{{ fmtTime(h.time) }}</span>
+          <button class="hist-del" title="删除" @click.stop="emit('remove', h)">✕</button>
         </div>
       </div>
       <button class="hist-clear" @click="emit('clear')">清空历史</button>
@@ -140,6 +141,24 @@ function methodClass(m) {
   flex: 0 0 auto;
   color: var(--text-dim);
   font-size: 11px;
+}
+.hist-del {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+  border-radius: 3px;
+  opacity: 0;
+}
+.hist-item:hover .hist-del {
+  opacity: 1;
+}
+.hist-del:hover {
+  color: var(--red);
+  background: rgba(248, 81, 73, 0.12);
 }
 
 .hist-clear {
