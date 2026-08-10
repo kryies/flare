@@ -6,7 +6,7 @@
 // 对一个通用 HTTP 工具是致命的;Rust 的 reqwest 没有这个限制。
 
 use base64::Engine;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -331,6 +331,27 @@ fn load_collections(app: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
+/// 保存环境变量到 env_vars.json
+#[tauri::command]
+fn save_env_vars(app: tauri::AppHandle, data: String) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("env_vars.json"), data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 读取环境变量
+#[tauri::command]
+fn load_env_vars(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = dir.join("env_vars.json");
+    if path.exists() {
+        std::fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Ok("[]".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -340,8 +361,35 @@ pub fn run() {
             send_request,
             download_response,
             save_collections,
-            load_collections
+            load_collections,
+            save_env_vars,
+            load_env_vars
         ])
+        .setup(|app| {
+            // 原生菜单栏:Flare | 编辑 | 视图
+            use tauri::menu::{Menu, MenuItem, Submenu};
+
+            let settings_item =
+                MenuItem::with_id(app, "settings", "设置...", true, Some("CmdOrCtrl+,"))?;
+            let quit_item =
+                MenuItem::with_id(app, "quit", "退出 Flare", true, Some("CmdOrCtrl+Q"))?;
+            let app_menu =
+                Submenu::with_items(app, "Flare", true, &[&settings_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&app_menu])?;
+            app.set_menu(menu)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            match event.id().as_ref() {
+                "settings" => {
+                    let _ = app.emit("open-settings", ());
+                }
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

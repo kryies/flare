@@ -23,7 +23,7 @@ function methodClass(m) {
 <template>
   <details class="history-panel">
     <summary>历史 ({{ history.length }})</summary>
-    <div v-if="!history.length" class="hist-empty">发送请求后,最近 50 条会记录在这里</div>
+    <div v-if="!history.length" class="hist-empty"></div>
     <template v-else>
       <div class="hist-list">
         <div

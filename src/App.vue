@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import RequestPanel from "./components/RequestPanel.vue";
 import ResponsePanel from "./components/ResponsePanel.vue";
@@ -102,9 +103,12 @@ function saveCollection() {
   const tab = activeTab.value;
   if (!tab) return;
   const f = tab.form;
-  collections.value.unshift({
-    id: Date.now(),
-    name: f.url.split("/").pop() || f.url,
+  // 去重:method + url 相同则更新,不重复添加
+  const existingIdx = collections.value.findIndex(
+    (c) => c.method === f.method && c.url === f.url
+  );
+  const data = {
+    id: existingIdx >= 0 ? collections.value[existingIdx].id : Date.now(),
     method: f.method,
     url: f.url,
     params: f.params.filter((p) => p.key.trim()).map((p) => ({ ...p })),
@@ -114,7 +118,12 @@ function saveCollection() {
     formData: (f.formData || []).map((p) => ({ ...p })),
     urlencoded: (f.urlencoded || []).filter((p) => p.key.trim()).map((p) => ({ ...p })),
     binaryFile: f.binaryFile || "",
-  });
+  };
+  if (existingIdx >= 0) {
+    collections.value[existingIdx] = data; // 更新已有的
+  } else {
+    collections.value.unshift(data); // 新增
+  }
   persistCollections();
 }
 function removeCollection(item) {
@@ -207,6 +216,60 @@ const settings = reactive({
 const layout = ref(localStorage.getItem("flare:layout") || "horizontal");
 watch(layout, (v) => localStorage.setItem("flare:layout", v));
 
+// 主题(dark/light),切换时改 <html> 的 class
+const theme = ref(localStorage.getItem("flare:theme") || "dark");
+watch(theme, (v) => {
+  localStorage.setItem("flare:theme", v);
+  document.documentElement.className = v === "light" ? "light" : "";
+});
+const showSettings = ref(false);
+const showVars = ref(false);
+
+// 左侧栏宽度(可拖拽调整,localStorage 持久化)
+const sidebarWidth = ref(Number(localStorage.getItem("flare:sidebar")) || 210);
+function startResize(e) {
+  e.preventDefault();
+  const onMove = (ev) => {
+    sidebarWidth.value = Math.max(50, Math.min(500, ev.clientX));
+  };
+  const onUp = () => {
+    localStorage.setItem("flare:sidebar", String(sidebarWidth.value));
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+// 请求/响应分栏宽度(可拖拽)
+const splitPercent = ref(Number(localStorage.getItem("flare:split")) || 42);
+const paneLeftStyle = computed(() => {
+  if (layout.value === "vertical") return { flex: `0 0 ${splitPercent.value}%` };
+  return { flex: `0 0 ${splitPercent.value}%` };
+});
+function startSplitResize(e) {
+  e.preventDefault();
+  const wrapper = e.target.parentElement;
+  const rect = wrapper.getBoundingClientRect();
+  const isVertical = layout.value === "vertical";
+  const onMove = (ev) => {
+    let pct;
+    if (isVertical) {
+      pct = ((ev.clientY - rect.top) / rect.height) * 100;
+    } else {
+      pct = ((ev.clientX - rect.left) / rect.width) * 100;
+    }
+    splitPercent.value = Math.max(10, Math.min(90, pct));
+  };
+  const onUp = () => {
+    localStorage.setItem("flare:split", String(splitPercent.value));
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
 // ===== 环境变量(URL/Headers/Body 里的 {{name}} 发送时替换成值)=====
 const envVars = reactive([{ key: "base_url", value: "https://postman-echo.com" }]);
 function applyVars(str) {
@@ -222,6 +285,16 @@ function addVar() {
 function removeVar(i) {
   envVars.splice(i, 1);
 }
+async function loadEnvVars() {
+  try {
+    const data = JSON.parse(await invoke("load_env_vars"));
+    if (Array.isArray(data) && data.length) envVars.splice(0, envVars.length, ...data);
+  } catch {}
+}
+async function persistEnvVars() {
+  await invoke("save_env_vars", { data: JSON.stringify(envVars) });
+}
+watch(envVars, () => persistEnvVars(), { deep: true });
 
 // ===== 发送请求 =====
 async function send() {
@@ -399,12 +472,19 @@ function loadTabs() {
 }
 watch(tabs, saveTabs, { deep: true });
 
-onMounted(() => {
+let unlistenSettings = null;
+onMounted(async () => {
   loadTabs();
   loadCollections();
+  loadEnvVars();
+  document.documentElement.className = theme.value === "light" ? "light" : "";
   window.addEventListener("keydown", onKeydown);
+  unlistenSettings = await listen("open-settings", () => { showSettings.value = true; });
 });
-onUnmounted(() => window.removeEventListener("keydown", onKeydown));
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKeydown);
+  if (unlistenSettings) unlistenSettings();
+});
 </script>
 
 <template>
@@ -415,31 +495,6 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         <span class="brand">Flare</span>
       </div>
       <div class="header-settings">
-        <label
-          class="setting"
-          title="禁用 TLS 证书校验(测自签名 HTTPS 时开启)"
-        >
-          <input type="checkbox" v-model="settings.disableTls" />
-          禁用证书
-        </label>
-        <input
-          class="proxy-input"
-          v-model="settings.proxy"
-          placeholder="代理 http://127.0.0.1:8080"
-          title="HTTP 代理,如转发到 Burp Suite: http://127.0.0.1:8080"
-        />
-        <label class="setting" title="请求超时(毫秒,0 = 不限)">
-          超时
-          <input
-            type="number"
-            class="timeout-input"
-            v-model.number="settings.timeoutMs"
-            min="0"
-            step="500"
-            placeholder="0"
-          />
-          ms
-        </label>
         <button
           class="layout-btn"
           @click="layout = layout === 'horizontal' ? 'vertical' : 'horizontal'"
@@ -451,50 +506,106 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
       </div>
     </header>
 
-    <!-- 标签栏 -->
-    <div class="tab-bar">
-      <div
-        v-for="tab in tabs"
-        :key="tab.id"
-        class="tab-item"
-        :class="{ active: tab.id === activeTabId }"
-        @click="activeTabId = tab.id"
-      >
-        <span class="tab-status" :class="tabStatus(tab)"></span>
-        <input
-          v-if="editingTabId === tab.id"
-          :ref="(el) => el?.focus()"
-          v-model="tab.name"
-          class="tab-name-input"
-          @click.stop
-          @blur="finishEdit(tab)"
-          @keydown.enter="finishEdit(tab)"
-          @keydown.esc="finishEdit(tab)"
-        />
-        <span v-else class="tab-name" title="双击重命名" @dblclick.stop="startEdit(tab.id)">{{ tab.name }}</span>
-        <button class="tab-close" title="关闭标签" @click.stop="closeTab(tab.id)">✕</button>
+    <!-- 设置弹窗(分区:通用 / 网络 / 变量) -->
+    <div v-if="showSettings" class="modal-overlay" @click.self="showSettings = false">
+      <div class="settings-modal">
+        <div class="settings-title">⚙ 设置</div>
+        <div class="settings-body">
+
+        <!-- 通用 -->
+        <div class="settings-section">通用</div>
+        <div class="settings-row">
+          <span class="settings-label">外观主题</span>
+          <div class="theme-switch">
+            <button :class="{ active: theme === 'dark' }" @click="theme = 'dark'">🌙 深色</button>
+            <button :class="{ active: theme === 'light' }" @click="theme = 'light'">☀️ 浅色</button>
+          </div>
+        </div>
+
+        <!-- 网络 -->
+        <div class="settings-section">网络</div>
+        <div class="settings-row">
+          <span class="settings-label">禁用 TLS 证书校验</span>
+          <input type="checkbox" v-model="settings.disableTls" />
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">HTTP 代理</span>
+          <input class="settings-input" v-model="settings.proxy" placeholder="http://127.0.0.1:8080" />
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">超时(ms,0=不限)</span>
+          <input class="settings-input settings-input-sm" type="number" v-model.number="settings.timeoutMs" min="0" step="500" />
+        </div>
+
+        <!-- 环境变量 -->
+        <div class="settings-section">环境变量</div>
+        <div class="settings-hint">在 URL / Params / Headers / Body 里用 <code v-pre>{{name}}</code> 引用,发送时自动替换</div>
+        <div class="var-modal-list">
+          <div v-for="(v, i) in envVars" :key="i" class="var-modal-row">
+            <input v-model="v.key" placeholder="name" class="settings-input var-modal-key" />
+            <input v-model="v.value" placeholder="value" class="settings-input var-modal-val" />
+            <button class="var-modal-del" @click="removeVar(i)">✕</button>
+          </div>
+        </div>
+        <button class="settings-add" @click="addVar">+ 添加变量</button>
+
+        <button class="settings-close" @click="showSettings = false">完成</button>
+        </div>
       </div>
-      <button class="tab-new" title="新建标签" @click="createTab">+</button>
     </div>
 
-    <main class="app-main" :class="{ vertical: layout === 'vertical' }" v-if="activeTab">
-      <section class="pane pane-left" :class="{ vertical: layout === 'vertical' }">
+    <div class="app-body">
+      <!-- 左侧栏:管理(历史/收藏),独立于标签栏 -->
+      <aside class="sidebar" :style="{ flexBasis: sidebarWidth + 'px' }">
         <HistoryPanel :history="history" @restore="restoreFromHistory" @clear="clearHistory" @remove="removeSingleHistory" />
         <CollectionPanel :items="collections" @restore="restoreCollection" @remove="removeCollection" />
-        <EnvPanel :vars="envVars" @add="addVar" @remove="removeVar" />
-        <RequestPanel :form="activeTab.form" :loading="activeTab.loading" @send="send" @save-collection="saveCollection" />
-      </section>
+        <div class="sidebar-resize" @mousedown="startResize"></div>
+      </aside>
 
-      <section class="pane pane-right" :class="{ vertical: layout === 'vertical' }">
-        <ResponsePanel
-          :response="activeTab.response"
-          :error="activeTab.error"
-          :loading="activeTab.loading"
-          :sent-request="activeTab.sentRequest"
-          @download="downloadResponse"
-        />
-      </section>
-    </main>
+      <!-- 右侧:标签栏 + 请求/响应(标签栏只在这里,不覆盖左侧) -->
+      <div class="main-wrapper">
+        <div class="tab-bar">
+          <div
+            v-for="tab in tabs"
+            :key="tab.id"
+            class="tab-item"
+            :class="{ active: tab.id === activeTabId }"
+            @click="activeTabId = tab.id"
+          >
+            <span class="tab-status" :class="tabStatus(tab)"></span>
+            <input
+              v-if="editingTabId === tab.id"
+              :ref="(el) => el?.focus()"
+              v-model="tab.name"
+              class="tab-name-input"
+              @click.stop
+              @blur="finishEdit(tab)"
+              @keydown.enter="finishEdit(tab)"
+              @keydown.esc="finishEdit(tab)"
+            />
+            <span v-else class="tab-name" title="双击重命名" @dblclick.stop="startEdit(tab.id)">{{ tab.name }}</span>
+            <button class="tab-close" title="关闭标签" @click.stop="closeTab(tab.id)">✕</button>
+          </div>
+          <button class="tab-new" title="新建标签" @click="createTab">+</button>
+        </div>
+
+        <main class="app-main" :class="{ vertical: layout === 'vertical' }" v-if="activeTab">
+          <section class="pane pane-left" :class="{ vertical: layout === 'vertical' }" :style="paneLeftStyle">
+            <RequestPanel :form="activeTab.form" :loading="activeTab.loading" @send="send" @save-collection="saveCollection" />
+          </section>
+          <div class="split-resize" :class="{ vertical: layout === 'vertical' }" @mousedown="startSplitResize"></div>
+          <section class="pane pane-right" :class="{ vertical: layout === 'vertical' }">
+            <ResponsePanel
+              :response="activeTab.response"
+              :error="activeTab.error"
+              :loading="activeTab.loading"
+              :sent-request="activeTab.sentRequest"
+              @download="downloadResponse"
+            />
+          </section>
+        </main>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -518,6 +629,24 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
     "Helvetica Neue", Arial, sans-serif;
   font-size: 14px;
   line-height: 1.5;
+  color: var(--text);
+  background-color: var(--bg);
+}
+
+/* 浅色主题 */
+:root.light {
+  --bg: #f5f6f8;
+  --bg-elevated: #ffffff;
+  --bg-input: #ebedf0;
+  --border: #d8dbe0;
+  --text: #1a1b20;
+  --text-dim: #6a7178;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --green: #16a34a;
+  --orange: #ca8a04;
+  --red: #dc2626;
+  --blue: #2563eb;
   color: var(--text);
   background-color: var(--bg);
 }
@@ -617,27 +746,69 @@ body,
   font-size: 13px;
 }
 
-/* 标签栏 */
+/* 主体:左侧栏 + 右侧请求/响应 */
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* 右侧:标签栏 + 请求/响应 */
+.main-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 左侧栏(历史/收藏) */
+.sidebar {
+  flex: 0 0 210px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  white-space: nowrap;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border);
+}
+.sidebar-resize {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+.sidebar-resize:hover {
+  background: var(--accent);
+}
+
+/* 标签栏(顶部水平,保持以前) */
 .tab-bar {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 8px;
+  padding: 6px 14px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   -webkit-user-select: none;
   user-select: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
 }
 .tab-item {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 7px 10px;
-  margin-top: 4px;
   cursor: pointer;
-  border-radius: 6px 6px 0 0;
+  border-radius: 6px;
   border: 1px solid transparent;
-  border-bottom: none;
   color: var(--text-dim);
   font-size: 13px;
   max-width: 200px;
@@ -648,9 +819,8 @@ body,
 }
 .tab-item.active {
   color: var(--text);
-  background: var(--bg);
-  border-color: var(--border);
-  margin-bottom: -1px;
+  background: var(--bg-input);
+  border-color: var(--accent);
 }
 .tab-name {
   overflow: hidden;
@@ -713,7 +883,6 @@ body,
   cursor: pointer;
   font-size: 18px;
   padding: 4px 10px;
-  margin-top: 4px;
   border-radius: 4px;
 }
 .tab-new:hover {
@@ -721,6 +890,7 @@ body,
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* 右侧主体(请求 + 响应) */
 .app-main {
   flex: 1;
   display: flex;
@@ -736,11 +906,33 @@ body,
 
 .pane-left {
   flex: 0 0 42%;
-  border-right: 1px solid var(--border);
+  border-right: none;
 }
 
 .pane-right {
   flex: 1;
+}
+
+/* 请求/响应拖拽条(隐形,hover 才显示) */
+.split-resize {
+  flex: 0 0 1px;
+  cursor: col-resize;
+  background: var(--border);
+  position: relative;
+}
+.split-resize::after {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+.split-resize:hover {
+  background: var(--accent);
+}
+.split-resize.vertical {
+  cursor: row-resize;
+}
+.split-resize.vertical::after {
+  inset: -3px 0;
 }
 
 /* 上下(垂直)布局 */
@@ -748,9 +940,7 @@ body,
   flex-direction: column;
 }
 .pane-left.vertical {
-  flex: 0 0 42%;
   border-right: none;
-  border-bottom: 1px solid var(--border);
 }
 .pane-right.vertical {
   flex: 1;
@@ -768,5 +958,156 @@ body,
 .layout-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* 设置弹窗 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.settings-modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 460px;
+  max-width: 90vw;
+  overflow: hidden;
+}
+.settings-title {
+  font-weight: 700;
+  font-size: 15px;
+  padding: 14px 20px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.settings-label {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.settings-body {
+  padding: 20px;
+}
+.settings-section {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-section:first-of-type {
+  margin-top: 0;
+}
+.settings-input-sm {
+  width: 80px;
+}
+.settings-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  width: 200px;
+}
+.settings-input:focus {
+  border-color: var(--accent);
+}
+.theme-switch {
+  display: flex;
+  gap: 6px;
+}
+.theme-switch button {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.theme-switch button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.settings-close {
+  margin-top: 8px;
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settings-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+.var-modal-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.var-modal-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.var-modal-key {
+  flex: 0 0 120px;
+  width: 120px;
+}
+.var-modal-val {
+  flex: 1;
+  width: auto;
+}
+.var-modal-del {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  width: 32px;
+}
+.var-modal-del:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+.settings-add {
+  width: 100%;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  padding: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.settings-add:hover {
+  border-color: var(--accent);
 }
 </style>

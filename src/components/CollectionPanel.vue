@@ -15,7 +15,7 @@ function methodClass(m) {
 <template>
   <details class="collection-panel">
     <summary>收藏 ({{ items.length }})</summary>
-    <div v-if="!items.length" class="empty">点 ⭐ 收藏常用请求,保存在这里(文件存储,不丢)</div>
+    <div v-if="!items.length" class="empty"></div>
     <div v-else class="list">
       <div
         v-for="item in items"
@@ -25,7 +25,7 @@ function methodClass(m) {
         @click="emit('restore', item)"
       >
         <span class="method" :class="methodClass(item.method)">{{ item.method }}</span>
-        <span class="name">{{ item.name || item.url }}</span>
+        <span class="name">{{ item.url }}</span>
         <button class="del" title="删除" @click.stop="emit('remove', item)">✕</button>
       </div>
     </div>

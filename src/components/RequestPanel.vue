@@ -424,6 +424,7 @@ function importCurl() {
 
 .url-bar {
   display: flex;
+  align-items: stretch;
   gap: 8px;
 }
 
@@ -447,8 +448,10 @@ function importCurl() {
   background: var(--accent);
   color: #fff;
   border: none;
+  border-radius: 6px;
   font-size: 15px;
   font-weight: 600;
+  cursor: pointer;
 }
 
 .curl-btn {
