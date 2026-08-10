@@ -21,6 +21,14 @@ function statusClass(s) {
   return "s-other";
 }
 
+// 响应体类型:图片 / 文本 / 二进制(决定展示方式)
+const isImage = computed(() => (props.response?.content_type || "").startsWith("image/"));
+const isTextBody = computed(() => {
+  const ct = (props.response?.content_type || "").split(";")[0].trim().toLowerCase();
+  return ct.startsWith("text/") || ct.includes("json") || ct.includes("xml") || ct.includes("html") || ct.includes("javascript");
+});
+const isBinaryBody = computed(() => !!props.response && !isImage.value && !isTextBody.value);
+
 // 响应体格式化成缩进 JSON;不是 JSON 就原样
 const formattedBody = computed(() => {
   if (!props.response) return "";
@@ -208,7 +216,13 @@ const respBodyHtml = computed(() => (props.response ? highlightJson(props.respon
             </button>
             <button class="copy-btn" @click="emit('download')">下载</button>
           </div>
-          <pre class="code-pre" v-html="respBodyHtml"></pre>
+          <div v-if="isImage" class="image-preview">
+            <img :src="`data:${response.content_type};base64,${response.body}`" alt="响应图片" />
+          </div>
+          <div v-else-if="isBinaryBody" class="binary-hint">
+            二进制响应 · {{ response.body_size }} 字节 · 点「下载」保存查看
+          </div>
+          <pre v-else class="code-pre" v-html="respBodyHtml"></pre>
         </div>
       </div>
 
@@ -439,6 +453,27 @@ const respBodyHtml = computed(() => (props.response ? highlightJson(props.respon
 .code-pre :deep(.json-null) { color: var(--text-dim); }
 
 /* 代码块(响应体 / 请求体共用)*/
+.image-preview {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  text-align: center;
+  overflow: auto;
+  max-height: 60vh;
+}
+.image-preview img {
+  max-width: 100%;
+}
+.binary-hint {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
 .code-pre {
   background: var(--bg-input);
   border: 1px solid var(--border);

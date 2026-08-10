@@ -27,6 +27,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # percent-encoding: 自己拼 URL 的查询参数(RFC 3986 风格,空格→%20)
 percent-encoding = "2"
 tauri-plugin-dialog = "2"
+base64 = "0.23.1"
 
 [dev-dependencies]
 # 仅测试用:提供 #[tokio::test] 宏和多线程 runtime 跑 async 测试

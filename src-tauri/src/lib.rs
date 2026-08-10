@@ -5,6 +5,7 @@
 // 为什么不在前端用 fetch?浏览器 fetch 受 CORS 限制会拦截跨域请求,
 // 对一个通用 HTTP 工具是致命的;Rust 的 reqwest 没有这个限制。
 
+use base64::Engine;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -65,6 +66,8 @@ pub struct ResponseData {
     pub status_text: String,
     pub headers: Vec<(String, String)>,
     pub body: String,
+    pub content_type: String, // 响应的 Content-Type(决定前端怎么展示:图片预览 / 文本 / 二进制提示)
+    pub body_size: u64, // 响应体字节数(二进制时不返回 body,前端显示大小)
     pub elapsed_ms: u64,
     pub final_url: String, // 实际发送的完整 URL(含编码后的查询参数),供前端照抄展示
 }
@@ -203,16 +206,42 @@ async fn send_request(
         .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
 
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| format!("读取响应体失败: {e}"))?;
+    // 按 Content-Type 决定怎么取 body:
+    //   image/* → base64 编码(前端 <img> 直接预览,不乱码)
+    //   文本类(text/、json、xml、html、javascript)→ utf-8 文本
+    //   其他二进制(octet-stream、zip 等)→ 不解码,前端显示大小 + 下载
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let ct = content_type.split(';').next().unwrap_or("").trim().to_lowercase();
+    let (body, body_size) = if ct.starts_with("image/") {
+        let bytes = resp.bytes().await.map_err(|e| format!("读取响应体失败: {e}"))?;
+        let n = bytes.len();
+        (base64::engine::general_purpose::STANDARD.encode(&bytes), n as u64)
+    } else if ct.starts_with("text/")
+        || ct.contains("json")
+        || ct.contains("xml")
+        || ct.contains("html")
+        || ct.contains("javascript")
+    {
+        let text = resp.text().await.map_err(|e| format!("读取响应体失败: {e}"))?;
+        let n = text.len();
+        (text, n as u64)
+    } else {
+        let bytes = resp.bytes().await.map_err(|e| format!("读取响应体失败: {e}"))?;
+        (String::new(), bytes.len() as u64)
+    };
 
     Ok(ResponseData {
         status,
         status_text,
         headers: resp_headers,
         body,
+        content_type,
+        body_size,
         elapsed_ms,
         final_url: full_url,
     })

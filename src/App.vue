@@ -99,6 +99,11 @@ function loadHistory() {
 function persistHistory() {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value));
 }
+// URL 没带协议时自动补 http://(像 Postman,免得每次手敲)
+function ensureScheme(s) {
+  if (s && !/^https?:\/\//i.test(s)) return "http://" + s;
+  return s;
+}
 function saveToHistory(tab) {
   history.value.unshift({
     id: Date.now(),
@@ -174,7 +179,7 @@ async function send() {
 
   try {
     // 应用环境变量({{name}} → 值),发送的是替换后的内容
-    const url = applyVars(tab.form.url);
+    const url = ensureScheme(applyVars(tab.form.url));
     const params = tab.form.params
       .filter((p) => p.key.trim() !== "")
       .map((p) => ({ key: applyVars(p.key), value: applyVars(p.value) }));
@@ -203,7 +208,7 @@ async function send() {
         .map((p) => ({ key: applyVars(p.key), value: applyVars(p.value) })),
       binaryFile: tab.form.binaryFile,
       disableTls: settings.disableTls,
-      proxy: settings.proxy.trim() || null,
+      proxy: ensureScheme(settings.proxy.trim()) || null,
       timeoutMs: Number(settings.timeoutMs) || 0,
     });
   } catch (e) {
@@ -215,31 +220,61 @@ async function send() {
 }
 
 // —— 下载响应到文件 ——
-function suggestFileName(url) {
+// 从 Content-Disposition 头解析 filename(服务器指定的文件名)
+function parseDisposition(headers) {
+  const cd = headers.find((h) => h[0].toLowerCase() === "content-disposition")?.[1] || "";
+  const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+// Content-Type → 文件后缀
+function mimeToExt(ct) {
+  const base = ct.split(";")[0].trim().toLowerCase();
+  const map = {
+    "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+    "image/svg+xml": "svg", "image/webp": "webp", "image/x-icon": "ico",
+    "application/pdf": "pdf", "application/zip": "zip", "application/gzip": "gz",
+    "application/json": "json", "application/xml": "xml",
+    "text/html": "html", "text/plain": "txt", "text/csv": "csv",
+  };
+  if (map[base]) return map[base];
+  if (base.startsWith("image/")) return base.slice(6);
+  if (base.startsWith("text/")) return base.slice(5);
+  return ""; // 未知类型(如 application/octet-stream)→ 无后缀
+}
+// 推断下载文件名,优先级同 Postman / 浏览器(RFC 6266)
+function suggestFileName(url, headers = []) {
+  // 1. Content-Disposition(服务器指定,最准)
+  const disp = parseDisposition(headers);
+  if (disp) return disp;
+  // 2. URL 路径最后段(带后缀)
   try {
-    const u = new URL(applyVars(url));
-    return u.pathname.split("/").filter(Boolean).pop() || "response.bin";
-  } catch {
-    return "response.bin";
-  }
+    const seg = new URL(applyVars(url)).pathname.split("/").filter(Boolean).pop();
+    if (seg && /\.[a-z0-9]{1,8}$/i.test(seg)) return seg;
+  } catch {}
+  // 3. Content-Type 推断后缀
+  const ct = headers.find((h) => h[0].toLowerCase() === "content-type")?.[1] || "";
+  const ext = mimeToExt(ct);
+  if (ext) return "response." + ext;
+  // 4. 默认兜底
+  return "response.bin";
 }
 async function downloadResponse() {
   const tab = activeTab.value;
   if (!tab) return;
   const path = await save({
-    defaultPath: suggestFileName(tab.form.url),
+    defaultPath: suggestFileName(tab.form.url, tab.response?.headers || []),
     filters: [{ name: "全部文件", extensions: ["*"] }],
   });
   if (!path) return; // 用户取消
   try {
     const n = await invoke("download_response", {
       method: tab.form.method,
-      url: applyVars(tab.form.url),
+      url: ensureScheme(applyVars(tab.form.url)),
       params: tab.form.params.filter((p) => p.key.trim()).map((p) => ({ key: applyVars(p.key), value: applyVars(p.value) })),
       headers: tab.form.headers.filter((h) => h.key.trim()).map((h) => ({ key: applyVars(h.key), value: applyVars(h.value) })),
       body: tab.form.body ? applyVars(tab.form.body) : null,
       disableTls: settings.disableTls,
-      proxy: settings.proxy.trim() || null,
+      proxy: ensureScheme(settings.proxy.trim()) || null,
       timeoutMs: Number(settings.timeoutMs) || 0,
       savePath: path,
     });
